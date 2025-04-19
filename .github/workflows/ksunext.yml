@@ -112,12 +112,16 @@ jobs:
 
       - name: Build kernel
         run: |
-          cd kernel_workspace
-          if [[ "${{ github.event.inputs.KERNEL_VERSION }}" == "6.1" || "${{ github.event.inputs.KERNEL_VERSION }}" == "6.6" ]]; then
-            ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} gki --action_env=KSU_VERSION
-          else
-            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
-          fi
+         echo "🔨 开始构建内核..."
+         cd kernel_workspace
+         if [[ "${{ github.event.inputs.KERNEL_VERSION }}" == "6.1" || "${{ github.event.inputs.KERNEL_VERSION }}" == "6.6" ]]; then
+         ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} gki --action_env=KSU_VERSION
+         else
+         LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
+         fi
+         echo "🔍 检查构建输出..."
+         ls -l ./kernel_workspace/out/arch/arm64/boot/  # 或者根据你的构建路径调整
+
 
       - name: Prepare AnyKernel3 and Copy Image
         run: |
