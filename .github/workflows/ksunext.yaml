@@ -1,5 +1,4 @@
 name: Build KernelSU Next
-
 on:
   workflow_dispatch:
     inputs:
@@ -80,10 +79,11 @@ jobs:
 
       - name: Clone KernelSU-Next repository
         run: |
-         git clone --branch next-susfs-dev https://github.com/KernelSU-Next/KernelSU-Next.git
-         cd KernelSU-Next/kernel
-         echo "Listing contents of kernel directory"
-         ls -l
+          git clone --branch next-susfs-dev https://github.com/KernelSU-Next/KernelSU-Next.git
+          cd KernelSU-Next/kernel
+          # 确保目标目录存在，如果不存在则创建
+          mkdir -p ./KernelSU-Next
+          ls -l kernel/
 
       - name: Set up susfs
         if: |
@@ -94,6 +94,9 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
           git clone https://github.com/TheWildJames/kernel_patches.git
           cd kernel_platform
+          
+          # 确保目标目录存在，如果不存在则创建
+          mkdir -p ./KernelSU-Next
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
@@ -122,7 +125,7 @@ jobs:
           )
           
           for patch in "${!FIX_PATCHES[@]}"; do
-            PATCH_FILE="../../kernel/${patch}.c_fix.patch"  # 修改为正确的路径
+            PATCH_FILE="../../kernel_patches/${patch}.c_fix.patch"
             FLAGS="${FIX_PATCHES[$patch]}"
             
             echo "::group::Applying $patch patch"
