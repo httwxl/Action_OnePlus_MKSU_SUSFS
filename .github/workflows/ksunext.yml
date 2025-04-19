@@ -95,52 +95,26 @@ jobs:
           echo "KSUVER=${KSU_VERSION}" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Apply SUSFS Patches
+      - name: Apply SUSFS Patches (Enhanced)
         if: ${{ github.event.inputs.SUSFS_ENABLED == 'true' }}
-        timeout-minutes: 20
         run: |
-          cd kernel_workspace
-          git clone --depth=1 --branch=gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }} \
-            https://gitlab.com/simonpunk/susfs4ksu.git
+          cd kernel_platform/common
           
-          # 验证补丁文件
-          required_files=(
-            "susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-            "susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch"
-          )
-          for file in "${required_files[@]}"; do
-            if [[ ! -f "$file" ]]; then
-              echo "❌ 缺失关键补丁文件: $file"
-              exit 1
-            fi
-          done
-
-          cd kernel_platform
-          # 应用 KernelSU 补丁
-          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU-Next/
-          cd KernelSU-Next
-          if ! patch -p1 --forward < 10_enable_susfs_for_ksu.patch; then
-            echo "❌ KernelSU SUSFS 补丁应用失败"
+          # 验证内核版本
+          KERNEL_RELEASE=$(make kernelversion)
+          if [[ "$KERNEL_RELEASE" != "${{ inputs.KERNEL_VERSION }}.*" ]]; then
+            echo "::error::内核版本不匹配 (当前: $KERNEL_RELEASE)"
             exit 1
           fi
-
-          # 应用内核补丁
-          cd ../common
-          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch .
-          if ! patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch; then
-            echo "❌ 内核 SUSFS 补丁应用失败"
+          
+          # 应用补丁
+          git apply --check 50_add_susfs_in_gki-...
+          if ! git apply --verbose 50_add_susfs_in_gki-...; then
+            echo "::error::补丁应用失败，请检查以下差异："
+            git diff --no-index --color=always original_file.c patched_file.c
             exit 1
           fi
-
-          # 应用隐藏补丁
-          curl -sLo 69_hide_stuff.patch https://raw.githubusercontent.com/WildPlusKernel/kernel_patches/main/69_hide_stuff.patch
-          if ! patch -p1 -F 3 < 69_hide_stuff.patch; then
-            echo "⚠️ 隐藏补丁应用失败（可能已合并）"
-          fi
-
-          git add -A
-          git commit -m "Apply SUSFS patches" || echo "No changes to commit"
-
+          
       - name: Build Kernel
         timeout-minutes: 120
         env:
