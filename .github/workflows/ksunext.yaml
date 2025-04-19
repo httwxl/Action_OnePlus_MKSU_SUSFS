@@ -77,21 +77,12 @@ jobs:
           sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
           sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
 
-      - name: Set up KernelSU Next
-        if: ${{ github.event.inputs.KSUNEXT_ENABLED == 'true' }}
+      - name: Clone KernelSU-Next repository
         run: |
-          cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs-dev
-          cd KernelSU-Next
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 15000)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          
-          # 检测Makefile路径
-          if [ -f kernel/Makefile ]; then
-            sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-          elif [ -f drivers/kernelsu/Makefile ]; then
-            sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" drivers/kernelsu/Makefile
-          fi
+         git clone --branch next-susfs-dev https://github.com/KernelSU-Next/KernelSU-Next.git
+         cd KernelSU-Next/kernel
+         # 检查补丁文件是否存在
+         ls -l kernel_patches/
 
       - name: Set up susfs
         if: |
