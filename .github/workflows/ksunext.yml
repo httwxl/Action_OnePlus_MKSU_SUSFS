@@ -1,5 +1,4 @@
 name: Build KernelSU Next
-
 on:
   workflow_dispatch:
     inputs:
@@ -33,27 +32,25 @@ on:
         required: true
         type: boolean
         default: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 16384  # 增加空间保留
-          temp-reserve-mb: 4096
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
-
+          
       - name: Configure Git
         run: |
-          git config --global user.name "CI Builder"
-          git config --global user.email "ci@kernel.build"
-          git config --global color.ui false
+         git config --global user.name "build"
+         git config --global user.email "3436378798@qq.com"
 
       - name: Install dependencies
         run: |
@@ -62,126 +59,88 @@ jobs:
 
       - name: Install repo tool
         run: |
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-          chmod a+x ~/repo
-          sudo mv ~/repo /usr/local/bin/repo
+         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+         chmod a+x ~/repo
+         sudo mv ~/repo /usr/local/bin/repo
 
       - name: Initialize repo and sync
-        timeout-minutes: 30
         run: |
-          mkdir -p kernel_workspace
-          cd kernel_workspace
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b refs/heads/oneplus/${{ github.event.inputs.CPU }} \
-            -m ${{ github.event.inputs.FEIL }}.xml \
-            --depth=1 \
-            --no-clone-bundle
-          
-          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
-          
-          # 修复版本标识
-          find kernel_platform -type f -name setlocalversion -exec sed -i 's/-dirty//g; s/-modified//g' {} +
+         mkdir kernel_workspace && cd kernel_workspace
+         repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
+         repo sync
+         rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+         rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+         sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
+         sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
 
-      - name: Setup KernelSU Next
-        if: ${{ github.event.inputs.KSUNEXT_ENABLED == 'true' }}
-        timeout-minutes: 15
+      - name: Set up KernelSU Next
+        if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
-          cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs-dev
-          
-          cd KernelSU-Next
-          # 精确计算版本号
-          KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
-          echo "KSUVER=${KSU_VERSION}" >> $GITHUB_ENV
-          sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-
-      - name: Apply SUSFS Patches (Enhanced)
-        if: ${{ github.event.inputs.SUSFS_ENABLED == 'true' }}
+         cd kernel_workspace/kernel_platform
+         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs-dev
+         cd KernelSU-Next
+         # 根据新分支调整版本号偏移量
+         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 15000)  # 修改偏移量为15000
+         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+         # 检查Makefile路径是否需要更新
+         if [ -f kernel/Makefile ]; then
+         sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+         elif [ -f drivers/kernelsu/Makefile ]; then  # 处理可能的路径变更
+         sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" drivers/kernelsu/Makefile
+         fi
+        
+      - name: Set up susfs
+        if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
-          cd kernel_platform/common
-          
-          # 验证内核版本
-          KERNEL_RELEASE=$(make kernelversion)
-          if [[ "$KERNEL_RELEASE" != "${{ inputs.KERNEL_VERSION }}.*" ]]; then
-            echo "::error::内核版本不匹配 (当前: $KERNEL_RELEASE)"
-            exit 1
-          fi
-          
-          # 应用补丁
-          git apply --check 50_add_susfs_in_gki-...
-          if ! git apply --verbose 50_add_susfs_in_gki-...; then
-            echo "::error::补丁应用失败，请检查以下差异："
-            git diff --no-index --color=always original_file.c patched_file.c
-            exit 1
-          fi
-          
-      - name: Build Kernel
-        timeout-minutes: 120
-        env:
-          KSU_VERSION: ${{ env.KSUVER }}
+           cd kernel_workspace
+           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
+           git clone https://github.com/TheWildJames/kernel_patches.git
+           cd kernel_platform
+           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
+           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
+           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+
+           # Apply patches
+           cd ./KernelSU-Next
+           patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+           cd ../common
+           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+           cp ../../kernel_patches/69_hide_stuff.patch ./
+           patch -p1 -F 3 < 69_hide_stuff.patch
+           git add -A && git commit -a -m "BUILD Kernel"
+           cd ..
+           cd ./msm-kernel && git add -A && git commit -a -m "BUILD Kernel"
+           cd ..
+             
+           cp ../kernel_patches/apk_sign.c_fix.patch ./
+           patch -p1 -F 3 < apk_sign.c_fix.patch
+             
+           cp ../kernel_patches/core_hook.c_fix.patch ./
+           patch -p1 --fuzz=3 < ./core_hook.c_fix.patch
+           
+           cp ../kernel_patches/selinux.c_fix.patch ./
+           patch -p1 -F 3 < selinux.c_fix.patch
+           
+      - name: Build kernel
         run: |
-          cd kernel_workspace
-          export KBUILD_BUILD_USER="CI-Builder"
-          export KBUILD_BUILD_HOST="GitHub-Actions"
-          
-          # 记录完整构建日志
-          {
-            echo "=== 开始构建 ==="
-            date
-            
-            if [[ "${{ github.event.inputs.KERNEL_VERSION }}" =~ ^6.(1|6)$ ]]; then
-              ./kernel_platform/build_with_bazel.py \
-                -t ${{ github.event.inputs.CPUD }} \
-                --build_target=//private/msm-kernel-${{ github.event.inputs.CPUD }}:kernel_aarch64 \
-                --action_env=KSU_VERSION \
-                --verbose_failures
-            else
-              export LTO=thin
-              ./kernel_platform/oplus/build/oplus_build_kernel.sh \
-                ${{ github.event.inputs.CPUD }} gki \
-                | grep -E 'warning:|error:'
-            fi
-            
-            date
-            echo "=== 构建结束 ==="
-          } 2>&1 | tee build.log
-
-          # 构建失败时自动终止
-          if grep -q "BUILD FAILED" build.log; then
-            echo "❌ 构建失败，请检查日志"
-            exit 1
-          fi
-
-      - name: Package Artifacts
-        timeout-minutes: 10
+         cd kernel_workspace
+         ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
+         
+      - name: Make AnyKernel3
         run: |
-          cd kernel_workspace
-          
-          # 精确查找构建产物
-          IMAGE_PATH=$(find kernel_platform/out -name Image -type f -print -quit)
-          DTB_PATH=$(find kernel_platform/out -name '*.dtb' -type f)
-          
-          if [[ -z "$IMAGE_PATH" ]]; then
-            echo "❌ 未找到内核镜像文件，可能路径："
-            find kernel_platform/out -name '*Image*'
-            exit 1
-          fi
-          
-          # 准备 AnyKernel3
-          git clone --depth=1 https://github.com/Kernel-SU/AnyKernel3
-          rm -rf AnyKernel3/.git
-          
-          cp "$IMAGE_PATH" AnyKernel3/
-          [[ -n "$DTB_PATH" ]] && cp $DTB_PATH AnyKernel3/
-          
-          # 生成版本信息
-          echo "Kernel Version: $(strings "$IMAGE_PATH" | grep 'Linux version' | head -n1)" > AnyKernel3/version-info.txt
-          echo "Build Date: $(date +%Y-%m-%d)" >> AnyKernel3/version-info.txt
+         git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
+         rm -rf ./AnyKernel3/.git
+         cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
 
-      - name: Upload Artifact
+      - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.FEIL }}-${{ env.KSUVER }}
-          path: |
-            kernel_workspace/AnyKernel3/*
-            kernel_workspace/build.log
+         name: AnyKernel3_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+         path: ./AnyKernel3/*
+         
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+         name: Image_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+         path: kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
