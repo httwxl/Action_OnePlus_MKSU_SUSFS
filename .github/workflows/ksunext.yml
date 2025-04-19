@@ -94,10 +94,10 @@ jobs:
            mkdir -p ./kernel_patches/fs
            mkdir -p ./kernel_patches/include/linux
 
-           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./kernel_patches/KernelSU/
-           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./kernel_patches/
-           cp ../susfs4ksu/kernel_patches/fs/* ./kernel_patches/fs/
-           cp ../susfs4ksu/kernel_patches/include/linux/* ./kernel_patches/include/linux/
+          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
+          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 
 
            # Apply patches
