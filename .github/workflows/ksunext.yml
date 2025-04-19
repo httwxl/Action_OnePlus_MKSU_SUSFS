@@ -83,22 +83,53 @@ jobs:
          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
          sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Set up susfs
+            - name: Set up susfs
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
-           cd kernel_workspace
-           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
-           git clone https://github.com/TheWildJames/kernel_patches.git
-           mkdir -p ./kernel_patches/KernelSU/
-           mkdir -p ./kernel_patches
-           mkdir -p ./kernel_patches/fs
-           mkdir -p ./kernel_patches/include/linux
+          cd kernel_workspace
 
+          # 克隆 SUSFS 和补丁仓库
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
+          git clone https://github.com/TheWildJames/kernel_patches.git
+
+          cd kernel_platform
+
+          # 检查目录是否存在
+          if [ ! -d "KernelSU-Next" ]; then
+            echo "❌ KernelSU-Next 文件夹不存在！请确认 setup.sh 是否正确执行。" && exit 1
+          fi
+
+          # 拷贝 patch 和源码文件
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 
+          # 打补丁（不报错继续执行）
+          cd ./KernelSU-Next
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+          
+          cd ../common
+          patch -p1 --forward < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+
+          # 额外补丁（如果存在）
+          cd ../
+          if [ -f ../kernel_patches/69_hide_stuff.patch ]; then
+            cp ../kernel_patches/69_hide_stuff.patch ./common/
+            cd common && patch -p1 -F 3 < 69_hide_stuff.patch || true
+            cd ..
+          fi
+
+          # 可选补丁修复
+          for fix in apk_sign.c_fix.patch core_hook.c_fix.patch selinux.c_fix.patch; do
+            if [ -f "../kernel_patches/$fix" ]; then
+              cp ../kernel_patches/$fix ./common/
+              cd common && patch -p1 -F 3 < "$fix" || true
+              cd ..
+            else
+              echo "⚠️ $fix 不存在，跳过"
+            fi
+          done
 
            # Apply patches
            cd ./KernelSU-Next
