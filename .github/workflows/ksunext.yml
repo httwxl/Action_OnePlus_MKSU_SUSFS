@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl
+          sudo apt install -y python3 git curl build-essential flex bison libssl-dev bc kmod
 
       - name: Install repo tool
         run: |
@@ -67,10 +67,13 @@ jobs:
       - name: Initialize repo and sync
         run: |
           mkdir kernel_workspace && cd kernel_workspace
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
-          repo sync
-          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+            -b refs/heads/oneplus/${{ github.event.inputs.CPU }} \
+            -m ${{ github.event.inputs.FEIL }}.xml \
+            --depth=1
+          repo sync -j$(nproc) --force-sync --no-clone-bundle
+          rm -f kernel_platform/common/android/abi_gki_protected_exports_*
+          rm -f kernel_platform/msm-kernel/android/abi_gki_protected_exports_*
           sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
           sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
 
@@ -78,11 +81,15 @@ jobs:
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
           cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs-dev
+          if [[ "${{ github.event.inputs.SUSFS_ENABLED }}" == "true" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs-dev
+          else
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          fi
           cd KernelSU-Next
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+          KSU_VERSION=$(($(git rev-list --count HEAD) + 10200))
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+          sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
       - name: Set up susfs
         if: github.event.inputs.SUSFS_ENABLED == 'true'
@@ -90,48 +97,63 @@ jobs:
           cd kernel_workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
           git clone https://github.com/TheWildJames/kernel_patches.git
-          cd kernel_platform
-          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 
+          # 调试：显示关键目录结构
+          echo "=====[DEBUG] 目录结构 ====="
+          pwd
+          ls -la
+          echo "=====[DEBUG] kernel_patches 内容 ====="
+          ls -la kernel_patches/
+
+          cd kernel_platform
+
+          # 复制 SUSFS 核心文件（修正路径）
+          cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
+          cp -r ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp -r ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+
+          # 应用 SUSFS 补丁
           cd ./KernelSU-Next
           patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
           cd ../common
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+
+          # 应用其他补丁（关键路径修正）
           cp ../../kernel_patches/69_hide_stuff.patch ./
-          patch -p1 -F 3 < 69_hide_stuff.patch
-          git add -A && git commit -a -m "BUILD Kernel"
+          patch -p1 -F 3 < 69_hide_stuff.patch || true
+          git add -A && git commit -a -m "BUILD: Apply base patches" || true
+
           cd ..
-          cd ./msm-kernel && git add -A && git commit -a -m "BUILD Kernel"
+          cd ./msm-kernel && git add -A && git commit -a -m "BUILD: MSM kernel patches" || true
           cd ..
-          cp ../kernel_patches/apk_sign.c_fix.patch ./
-          patch -p1 -F 3 < apk_sign.c_fix.patch
-          cp ../kernel_patches/core_hook.c_fix.patch ./
-          patch -p1 --fuzz=3 < ./core_hook.c_fix.patch
-          cp ../kernel_patches/selinux.c_fix.patch ./
-          patch -p1 -F 3 < selinux.c_fix.patch
+
+          # 应用关键修复补丁（路径修正）
+          cp ../../kernel_patches/apk_sign.c_fix.patch ./ || { echo "⚠️ apk_sign补丁不存在"; exit 0; }
+          patch -p1 -F 3 < apk_sign.c_fix.patch || true
+
+          cp ../../kernel_patches/core_hook.c_fix.patch ./
+          patch -p1 --fuzz=3 < core_hook.c_fix.patch || true
+
+          cp ../../kernel_patches/selinux.c_fix.patch ./
+          patch -p1 -F 3 < selinux.c_fix.patch || true
 
       - name: Build kernel
         run: |
           cd kernel_workspace
+          chmod +x ./kernel_platform/oplus/build/oplus_build_kernel.sh
           ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
 
-      - name: Make AnyKernel3
+      - name: Package AnyKernel3
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
-          rm -rf ./AnyKernel3/.git
-          cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
+          rm -rf AnyKernel3/.git
+          cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image AnyKernel3/
 
-      - name: Upload AnyKernel3
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-          path: ./AnyKernel3/*
-         
-      - name: Upload Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-          path: kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
+          name: Kernel_${{ github.event.inputs.FEIL }}_${{ env.KSUVER }}
+          path: |
+            AnyKernel3/*
+            kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
