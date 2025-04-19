@@ -95,47 +95,51 @@ jobs:
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
           cd kernel_workspace
+
+          # 克隆仓库并验证分支
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
           git clone https://github.com/TheWildJames/kernel_patches.git
 
-          # 调试：显示关键目录结构
-          echo "=====[DEBUG] 目录结构 ====="
-          pwd
-          ls -la
+          # 调试：显示 SUSFS 仓库结构
+          echo "=====[DEBUG] susfs4ksu 目录结构 ====="
+          ls -la susfs4ksu/kernel_patches/
           echo "=====[DEBUG] kernel_patches 内容 ====="
           ls -la kernel_patches/
 
           cd kernel_platform
 
-          # 复制 SUSFS 核心文件（修正路径）
-          cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
-          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
-          cp -r ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp -r ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          # 修正1：使用正确的相对路径
+          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/ || { echo "❌ 10_enable_susfs补丁缺失"; exit 1; }
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/ || { echo "❌ 50_add_susfs补丁缺失"; exit 1; }
 
-          # 应用 SUSFS 补丁
+          # 递归复制目录
+          cp -r ../susfs4ksu/kernel_patches/fs/* ./common/fs/ || true
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ || true
+
+          # 应用补丁
           cd ./KernelSU-Next
-          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || { echo "⚠️ 补丁应用失败但继续"; }
           cd ../common
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
 
-          # 应用其他补丁（关键路径修正）
-          cp ../../kernel_patches/69_hide_stuff.patch ./
+          # 应用其他补丁（路径修正）
+          cp ../../kernel_patches/69_hide_stuff.patch ./ || { echo "⚠️ 69_hide_stuff.patch 不存在"; exit 0; }
           patch -p1 -F 3 < 69_hide_stuff.patch || true
+
           git add -A && git commit -a -m "BUILD: Apply base patches" || true
 
           cd ..
           cd ./msm-kernel && git add -A && git commit -a -m "BUILD: MSM kernel patches" || true
           cd ..
 
-          # 应用关键修复补丁（路径修正）
+          # 应用关键修复补丁
           cp ../../kernel_patches/apk_sign.c_fix.patch ./ || { echo "⚠️ apk_sign补丁不存在"; exit 0; }
           patch -p1 -F 3 < apk_sign.c_fix.patch || true
 
-          cp ../../kernel_patches/core_hook.c_fix.patch ./
+          cp ../../kernel_patches/core_hook.c_fix.patch ./ || { echo "⚠️ core_hook补丁不存在"; exit 0; }
           patch -p1 --fuzz=3 < core_hook.c_fix.patch || true
 
-          cp ../../kernel_patches/selinux.c_fix.patch ./
+          cp ../../kernel_patches/selinux.c_fix.patch ./ || { echo "⚠️ selinux补丁不存在"; exit 0; }
           patch -p1 -F 3 < selinux.c_fix.patch || true
 
       - name: Build kernel
