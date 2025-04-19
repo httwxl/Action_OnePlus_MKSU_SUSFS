@@ -114,10 +114,33 @@ jobs:
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
-          IMAGE_PATH=$(find kernel_workspace/kernel_platform/out -type f -name Image | head -n 1)
-          echo "Found Image at: $IMAGE_PATH"
-          cp "$IMAGE_PATH" ./AnyKernel3/
+          dir1="./kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/"
+          dir2="./kernel_workspace/kernel_platform/common/out/arch/arm64/boot/"
+          dir3="./kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/dist/"
+          target1="./AnyKernel3/"
+          target2="./kernel_workspace/kernel"
 
+          if find "$dir1" -name "Image" | grep -q "Image"; then
+            image_path="$dir1"Image
+          elif find "$dir2" -name "Image" | grep -q "Image"; then
+            image_path="$dir2"Image
+          elif find "$dir3" -name "Image" | grep -q "Image"; then
+            image_path="$dir3"Image
+          else
+            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+          fi
+
+          if [ -n "$image_path" ] && [ -f "$image_path" ]; then
+            mkdir -p "$dir1"
+            if [ "$(realpath "$image_path")" != "$(realpath "$dir1"Image)" ]; then
+              cp "$image_path" "$dir1"
+            else
+              echo "源文件与目标相同，跳过复制"
+            fi
+          else
+            echo "未找到 Image 文件，构建可能失败"
+            exit 1
+          fi
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
