@@ -82,7 +82,7 @@ jobs:
          git clone --branch next-susfs-dev https://github.com/KernelSU-Next/KernelSU-Next.git
          cd KernelSU-Next/kernel
          # 检查补丁文件是否存在
-         ls -l kernel_patches/
+         ls -l kernel/
 
       - name: Set up susfs
         if: |
@@ -121,7 +121,7 @@ jobs:
           )
           
           for patch in "${!FIX_PATCHES[@]}"; do
-            PATCH_FILE="../../kernel_patches/${patch}.c_fix.patch"
+            PATCH_FILE="kernel/${patch}.c_fix.patch"  # 更新补丁文件的路径
             FLAGS="${FIX_PATCHES[$patch]}"
             
             echo "::group::Applying $patch patch"
